@@ -1,15 +1,14 @@
-from django.http import Http404
 from django.db.models import Q
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from django.http import Http404
 from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .models import Product, Category
-from .serializers import ProductSerializer, CategorySerializer
+from .models import Category, Product
+from .serializers import CategorySerializer, ProductSerializer
 
 
-class LastestProductsList(APIView):
+class LatestProductsList(APIView):
     def get(self, request, format=None):
         products = Product.objects.all()[0:4]
         serializer = ProductSerializer(products, many=True)
@@ -19,7 +18,9 @@ class LastestProductsList(APIView):
 class ProductDetail(APIView):
     def get_object(self, category_slug, product_slug, format=None):
         try:
-            return Product.objects.filter(category__slug=category_slug).get(slug=product_slug)
+            return Product.objects.filter(category__slug=category_slug).get(
+                slug=product_slug
+            )
         except Product.DoesNotExist:
             raise Http404
 
@@ -42,12 +43,13 @@ class CategoryDetail(APIView):
         return Response(serializer.data)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 def search(request):
-    query = request.data.get('query', '')
+    query = request.data.get("query", "")
     if query:
         products = Product.objects.filter(
-            Q(name__icontains=query) | Q(description__icontains=query))
+            Q(name__icontains=query) | Q(description__icontains=query)
+        )
         serializer = ProductSerializer(products, many=True)
         return Response(serializer.data)
     else:

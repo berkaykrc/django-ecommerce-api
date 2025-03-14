@@ -1,10 +1,10 @@
+from product.serializers import ProductSerializer
 from rest_framework import serializers
 
 from .models import Order, OrderItem
 
-from product.serializers import ProductSerializer
 
-class MyOrderItemSerializer(serializers.ModelSerializer):    
+class OrderItemReadSerializer(serializers.ModelSerializer):
     product = ProductSerializer()
 
     class Meta:
@@ -15,8 +15,10 @@ class MyOrderItemSerializer(serializers.ModelSerializer):
             "quantity",
         )
 
-class MyOrderSerializer(serializers.ModelSerializer):
-    items = MyOrderItemSerializer(many=True)
+
+class OrderReadSerializer(serializers.ModelSerializer):
+    items = OrderItemReadSerializer(many=True)
+    payment_method = serializers.CharField()
 
     class Meta:
         model = Order
@@ -31,10 +33,11 @@ class MyOrderSerializer(serializers.ModelSerializer):
             "phone",
             "stripe_token",
             "items",
-            "paid_amount"
+            "paid_amount",
         )
 
-class OrderItemSerializer(serializers.ModelSerializer):    
+
+class OrderItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = (
@@ -43,8 +46,10 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "quantity",
         )
 
-class OrderSerializer(serializers.ModelSerializer):
-    items = OrderItemSerializer(many=True)
+
+class OrderWriteSerializer(serializers.ModelSerializer):
+    items = OrderItemWriteSerializer(many=True)
+    payment_method = serializers.CharField(write_only=True)
 
     class Meta:
         model = Order
@@ -59,13 +64,15 @@ class OrderSerializer(serializers.ModelSerializer):
             "phone",
             "stripe_token",
             "items",
+            "payment_method",
         )
-    
+
     def create(self, validated_data):
-        items_data = validated_data.pop('items')
+        items_data = validated_data.pop("items")
+        validated_data.pop("payment_method", None)
         order = Order.objects.create(**validated_data)
 
         for item_data in items_data:
             OrderItem.objects.create(order=order, **item_data)
-            
+
         return order
