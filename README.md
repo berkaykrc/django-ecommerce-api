@@ -37,32 +37,21 @@ A comprehensive RESTful API for Django-based e-commerce applications with produc
 2. Create and activate a virtual environment:
    ```bash
    python -m venv .venv
+   or
+   uv venv  # Using uv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 3. Install dependencies:
-   
-   **Option 1: Simple approach for standalone application**
    ```bash
    using uv
-   uv install
-   ```
-   
-   **Option 2: Package approach (if you want to reuse the apps elsewhere)**
-   ```bash
-   # Using pip with editable mode
-   pip install -e .
-   pip install -e ".[dev]"  # Include development dependencies
-   
-   # Or using uv
-   uv install -e .
-   uv install -e . --dev
+   uv sync
    ```
 
 4. Configure environment variables:
    ```bash
    cp ecommerce_django/ecommerce_django/.env.dist ecommerce_django/ecommerce_django/.env
-   # Edit the .env file with your settings
+   # Edit the .env file with your credentials and settings
    ```
 
 5. Run migrations:
@@ -91,18 +80,15 @@ A comprehensive RESTful API for Django-based e-commerce applications with produc
 
 ### Products
 
-- `GET /api/products/`: List all products
-- `POST /api/products/`: Create a new product
-- `GET /api/products/{id}/`: Retrieve a specific product
-- `PUT /api/products/{id}/`: Update a product
-- `DELETE /api/products/{id}/`: Delete a product
+- `GET /api/v1/products/latest-products/`: List all products
+- `GET /api//v1/products/<category_slug>/<product_slug>/`: finds a product based on both its category slug and product slug.
+- `POST /api/v1/products/product/search/`: search products by name
+- `GET /api/v1/product/<category_slug>/`: Retrieve information about a specific category
 
 ### Orders
 
-- `GET /api/orders/`: List user orders
-- `POST /api/orders/`: Create a new order
-- `GET /api/orders/{id}/`: Retrieve order details
-- `POST /api/orders/{id}/checkout/`: Process payment for an order
+- `GET /api/v1/orders/`: List user orders
+- `POST /api/v1/orders/checkout/`: Process payment for an order and create a new order
 
 ## Development
 
@@ -112,8 +98,8 @@ This project uses `uv` for dependency management. The `uv.lock` file ensures con
 
 To update dependencies:
 ```bash
-uv pip install <package>  # Add a new dependency
-uv pip install <package> --dev  # Add a development dependency
+uv add <package>  # Add a new dependency
+uv add <package> --dev  # Add a development dependency
 ```
 
 ### Code Quality
@@ -121,8 +107,8 @@ uv pip install <package> --dev  # Add a development dependency
 The project uses Ruff for linting and formatting:
 
 ```bash
-ruff check .
-ruff format .
+uv run ruff check .
+uv run ruff format .
 ```
 
 ### Testing

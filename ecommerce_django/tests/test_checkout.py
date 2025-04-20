@@ -7,6 +7,8 @@ from product.models import Category, Product
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
+from ecommerce_django.tests.utils.api_token import get_user_jwt_header
+
 
 class CheckoutEndpointTest(APITestCase):
     def setUp(self):
@@ -32,11 +34,9 @@ class CheckoutEndpointTest(APITestCase):
 
         # Setup client
         self.client = APIClient()
-        self.client.force_authenticate(user=self.user)
-        """ do not know why this does not work with APIClient
-        self.jwt_token = get_user_jwt_header(username, password)
+        # self.client.force_authenticate(user=self.user)
+        self.jwt_token = get_user_jwt_header(username, password)["Authorization"]
         self.client.credentials(HTTP_AUTHORIZATION=self.jwt_token)
-        """
         self.checkout_url = reverse("checkout")
 
         # Valid checkout data

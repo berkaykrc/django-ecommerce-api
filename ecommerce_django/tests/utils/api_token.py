@@ -29,5 +29,5 @@ def get_user_jwt_header(username, password):
     jwt = response.data["access"]  # Get the access token from the response
 
     return {
-        "Authorization": f"Bearer {jwt}",
+        "Authorization": f"JWT {jwt}",
     }

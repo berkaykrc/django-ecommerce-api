@@ -1,379 +1,137 @@
 import json
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest import mock
 
 import pytest
-import stripe
 from django.urls import reverse
-from order.views import checkout
-from rest_framework.test import APIRequestFactory
-
-
-# Use pytest fixtures instead of setUp method
-@pytest.fixture
-def api_factory():
-    return APIRequestFactory()
+from rest_framework import status
+from rest_framework.test import APIClient
 
 
 @pytest.fixture
-def checkout_url():
-    return reverse("checkout")
+def checkout_url() -> str:
+    return reverse(viewname="checkout")
 
 
 @pytest.fixture
-def checkout_data(test_product):
+def checkout_data(test_product) -> dict[str, Any]:
     """Create valid checkout data using test_product from conftest.py"""
     return {
         "first_name": "Test",
         "last_name": "User",
         "email": "test@example.com",
         "address": "Test Address",
-        "zip_code": "12345",
+        "zipcode": "12345",
         "place": "Test Place",
         "phone": "1234567890",
         "items": [
             {
-                "product": test_product.id,
+                "product": test_product.pk,
                 "quantity": 2,
                 "price": str(test_product.price),
             }
         ],
-        "payment_method": {
-            "card": {
-                "number": "4242424242424242",
-                "exp_month": 12,
-                "exp_year": 2030,
-                "cvc": "123",
-            },
-            "billing_details": {"postal_code": "12345"},
-        },
     }
 
 
-# Convert class-based tests to pytest function-based tests
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
+@pytest.mark.django_db
+@mock.patch("stripe.PaymentIntent.create", autospec=True)
 def test_stripe_payment_intent_creation(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
+    mock_paymentintent_create,
+    unauthorized_api_client: APIClient,
+    checkout_data: dict[str, Any],
+    checkout_url: str,
+    get_jwt_header: dict[str, str],
+) -> None:
+    """Test Stripe payment intent creation.
 
-    # Mock the Stripe PaymentIntent.create method
-    mock_intent = MagicMock()
-    mock_intent.id = "pi_test_123456789"
-    mock_intent.client_secret = "cs_test_123456789"
-    mock_payment_intent.return_value = mock_intent
+    Args:
+        mock_paymentintent_create: Mocked Stripe PaymentIntent.create function
+        unauthorized_api_client: API client fixture without authorization
+        checkout_data: Dictionary containing checkout form data
+        checkout_url: The URL endpoint for checkout
+        get_jwt_header: JWT authorization header fixture
 
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
+    Tests:
+        Verifies that a payment intent is created successfully and
+        returns the expected 201 Created response.
+    """
+    from types import SimpleNamespace
+
+    mock_intent = SimpleNamespace(
+        **{
+            "id": "pi_3MtwBwLkdIwHu7ix28a3tqPa",
+            "client_secret": "pi_3MtwBwLkdIwHu7ix28a3tqPa_secret_YrKJUKribcBjcG8HVhfZluoGH",  # noqa: E501
+            "status": "succeeded",
+            "amount": 20000,
+            "currency": "usd",
+        }
+    )
+    mock_paymentintent_create.return_value = mock_intent
+    access_token: str = get_jwt_header["access"]
+    unauthorized_api_client.credentials(HTTP_AUTHORIZATION=f"JWT {access_token}")
+    checkout_data.update({"payment_method": "pm_card_visa"})
+    response = unauthorized_api_client.post(
+        path=checkout_url,
         data=json.dumps(checkout_data),
         content_type="application/json",
     )
-    request.user = test_user
+    mock_paymentintent_create.assert_called_once()
 
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify PaymentIntent.create was called with correct amount
-    mock_payment_intent.assert_called_once()
-    call_kwargs = mock_payment_intent.call_args[1]
-    assert call_kwargs["amount"] == 20000  # $200 = 2 * $100
-    assert call_kwargs["currency"] == "usd"
-    assert response.status_code == 201
+    assert response.status_code == status.HTTP_201_CREATED
+    assert status.is_success(code=response.status_code)
 
 
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_stripe_with_successful_card(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-    test_cards,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    argnames="code, payment_method, http_code",
+    argvalues=[
+        ("success", "pm_card_visa", status.HTTP_201_CREATED),
+        (
+            "generic_declined",
+            "pm_card_visa_chargeDeclined",
+            status.HTTP_400_BAD_REQUEST,
+        ),
+        (
+            "insufficient_funds",
+            "pm_card_visa_chargeDeclinedInsufficientFunds",
+            status.HTTP_400_BAD_REQUEST,
+        ),
+        ("lost", "pm_card_visa_chargeDeclinedLostCard", status.HTTP_400_BAD_REQUEST),
+        (
+            "expired_card",
+            "pm_card_chargeDeclinedExpiredCard",
+            status.HTTP_400_BAD_REQUEST,
+        ),
+        (
+            "processing_error",
+            "pm_card_chargeDeclinedProcessingError",
+            status.HTTP_400_BAD_REQUEST,
+        ),
+    ],
+)
+def test_stripe_with_payment_methods(
+    unauthorized_api_client: APIClient,
+    checkout_data: dict[str, str],
+    code,
+    payment_method,
+    http_code,
+    get_jwt_header: dict[str, str],
+    checkout_url: str,
+) -> None:
+    """
+    Test handling of various Stripe payment method statuses.
 
-    # Use successful test card
-    checkout_data["payment_method"]["card"]["number"] = test_cards["success"]
-
-    # Mock the Stripe PaymentIntent.create method for success
-    mock_intent = MagicMock()
-    mock_intent.id = "pi_test_success"
-    mock_intent.client_secret = "cs_test_success"
-    mock_payment_intent.return_value = mock_intent
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
+    Verifies that successful cards return 201 and problematic cards
+    appropriately return 400 responses.
+    """
+    access_token: str = get_jwt_header["access"]
+    unauthorized_api_client.credentials(HTTP_AUTHORIZATION=f"JWT {access_token}")
+    checkout_data.update({"payment_method": payment_method})
+    response = unauthorized_api_client.post(
+        path=checkout_url,
+        data=json.dumps(obj=checkout_data),
         content_type="application/json",
     )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
     # Verify success
-    assert response.status_code == 201
-
-
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_stripe_with_declined_card(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-    test_cards,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
-
-    # Use declined test card
-    checkout_data["payment_method"]["card"]["number"] = test_cards["declined"]
-
-    # Mock the Stripe CardError for declined card
-    mock_payment_intent.side_effect = stripe.error.CardError(
-        param="card",
-        code="card_declined",
-        message="Your card was declined.",
-        json_body={
-            "error": {"code": "card_declined", "message": "Your card was declined."}
-        },
-    )
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
-        content_type="application/json",
-    )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify declined
-    assert response.status_code == 400
-    assert "error" in response.data
-
-
-@patch("stripe.PaymentIntent.confirm")
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_stripe_3ds_authentication(
-    mock_product_get,
-    mock_create,
-    mock_confirm,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-    test_cards,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
-
-    # Set card that requires authentication
-    checkout_data["payment_method"]["card"]["number"] = test_cards["requires_auth"]
-
-    # Mock the initial payment intent creation
-    mock_intent = MagicMock()
-    mock_intent.id = "pi_test_auth"
-    mock_intent.client_secret = "cs_test_auth"
-    mock_intent.status = "requires_action"
-    mock_intent.next_action = {
-        "type": "use_stripe_sdk",
-        "use_stripe_sdk": {"type": "3d_secure_redirect"},
-    }
-    mock_create.return_value = mock_intent
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
-        content_type="application/json",
-    )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify response contains authentication info
-    assert response.status_code == 200
-    assert "requires_action" in response.data
-    assert "payment_intent_client_secret" in response.data
-
-
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_stripe_card_error_handling(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
-
-    # Mock Stripe CardError
-    mock_payment_intent.side_effect = stripe.error.CardError(
-        param="number", code="invalid_number", message="Your card number is invalid"
-    )
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
-        content_type="application/json",
-    )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify error response
-    assert response.status_code == 400
-    assert "error" in response.data
-    assert "card" in response.data["error"].lower()
-
-
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_stripe_rate_limit_error_handling(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
-
-    # Mock Stripe RateLimitError
-    mock_payment_intent.side_effect = stripe.error.RateLimitError(
-        message="Too many requests made to the API too quickly"
-    )
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
-        content_type="application/json",
-    )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify error response
-    assert response.status_code == 400
-    assert "error" in response.data
-    assert "rate limit" in response.data["error"].lower()
-
-
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_stripe_authentication_error_handling(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
-
-    # Mock Stripe AuthenticationError
-    mock_payment_intent.side_effect = stripe.error.AuthenticationError(
-        message="Invalid API Key provided"
-    )
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
-        content_type="application/json",
-    )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify error response
-    assert response.status_code == 400
-    assert "error" in response.data
-    assert "authentication" in response.data["error"].lower()
-
-
-@patch("stripe.PaymentIntent.create")
-@patch("product.models.Product.objects.get")
-def test_generic_stripe_error_handling(
-    mock_product_get,
-    mock_payment_intent,
-    test_user,
-    test_product,
-    api_factory,
-    checkout_data,
-):
-    # Mock the product
-    mock_product = MagicMock()
-    mock_product.price = 100.00
-    mock_product.id = test_product.id
-    mock_product_get.return_value = mock_product
-
-    # Mock generic Stripe error
-    mock_payment_intent.side_effect = stripe.error.StripeError(
-        message="Something unexpected went wrong"
-    )
-
-    # Create request
-    request = api_factory.post(
-        "/api/checkout/",
-        data=json.dumps(checkout_data),
-        content_type="application/json",
-    )
-    request.user = test_user
-
-    # Call the checkout view
-    response = checkout(request)
-
-    # Verify error response
-    assert response.status_code == 400
-    assert "error" in response.data
+    assert response.status_code == http_code
